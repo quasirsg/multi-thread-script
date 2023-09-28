@@ -43,6 +43,9 @@ const tableName = "accounts-cbus-develop-table";
     // Inicializa el índice de página
     let pageIndex = 0;
     const batchSize = 100; // Tamaño del lote
+    console.log(
+      `Este script necesita que tengas configuradas tus credenciales de aws en tu pc `
+    );
     console.log(`Comenzando la escritura por lotes en la tabla ${tableName}`);
     while (pageIndex * pageSize < data.length) {
       // Calcula el rango de líneas para la página actual
