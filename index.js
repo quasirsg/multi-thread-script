@@ -4,7 +4,6 @@ const DynamoDBDocumentClient =
 const BatchWriteCommand = require("@aws-sdk/lib-dynamodb").BatchWriteCommand;
 const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const XLSX = require("xlsx");
-const fs = require("fs");
 // Configura la región de AWS (si es necesario)
 const s3Client = new S3Client({
   region: "us-east-1", // Reemplaza con tu región de AWS
@@ -104,42 +103,14 @@ const tableName = "accounts-cbus-develop-table";
             })),
           },
         };
-        try {
-          await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
-          const registrosEscritosEnLote = jsonResult.length;
-          totalRegistrosEscritos += registrosEscritosEnLote; // Actualiza el contador
 
-          console.log(
-            `${registrosEscritosEnLote} registros escritos en este lote`
-          );
-        } catch (error) {
-          // Si ocurre un error al escribir en DynamoDB, guarda los registros no escritos en un archivo JSON
-          console.error("Error al escribir en DynamoDB:", error);
+        await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
+        const registrosEscritosEnLote = jsonResult.length;
+        totalRegistrosEscritos += registrosEscritosEnLote; // Actualiza el contador
 
-          // Nombre del archivo JSON para guardar los registros no escritos
-          const fileName = "registros-no-escritos.json";
-
-          // Lee el archivo JSON actual (si existe)
-          let existingData = [];
-          try {
-            existingData = JSON.parse(fs.readFileSync(fileName));
-          } catch (readError) {
-            console.error(
-              "Error al leer el archivo JSON existente:",
-              readError
-            );
-          }
-
-          // Agrega los registros no escritos al arreglo existingData
-          existingData.push(...jsonResult);
-          // Escribe el arreglo existingData en el archivo JSON
-          try {
-            fs.writeFileSync(fileName, JSON.stringify(existingData, null, 2));
-            console.log(`Registros no escritos guardados en ${fileName}`);
-          } catch (writeError) {
-            console.error("Error al escribir el archivo JSON:", writeError);
-          }
-        }
+        console.log(
+          `${registrosEscritosEnLote} registros escritos en este lote`
+        );
       }
       // Incrementa el índice de página
       pageIndex++;
