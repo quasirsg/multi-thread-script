@@ -37,13 +37,13 @@ const ddbDocClient = DynamoDBDocumentClient.from(client);
     // Convierte la hoja en un arreglo de objetos JSON
     const data = XLSX.utils.sheet_to_json(sheet, { header: 1 });
 
-    // Define el tamaño de página (por ejemplo, 100 líneas por página)
+    // Define el tamaño de página (por ejemplo, 100 líneas por página, en este caso 25 por que el BatchWriteCommand permite solo 25 registros por operación)
     const pageSize = 25;
 
     // Inicializa el índice de página
     let pageIndex = 0;
     const batchSize = 100; // Tamaño del lote
-
+    console.log("Comenzando la escritura por lotes");
     while (pageIndex * pageSize < data.length) {
       // Calcula el rango de líneas para la página actual
       const startIndex = pageIndex * pageSize;
