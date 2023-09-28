@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 const DynamoDBClient = require("@aws-sdk/client-dynamodb").DynamoDBClient;
 const DynamoDBDocumentClient =
   require("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient;
