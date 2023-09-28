@@ -18,7 +18,7 @@ const params = {
 
 const client = new DynamoDBClient({ region: "us-east-1" });
 const ddbDocClient = DynamoDBDocumentClient.from(client);
-
+const tableName = "accounts-cbus-develop-table";
 (async () => {
   try {
     let totalRegistrosEscritos = 0;
@@ -43,7 +43,7 @@ const ddbDocClient = DynamoDBDocumentClient.from(client);
     // Inicializa el índice de página
     let pageIndex = 0;
     const batchSize = 100; // Tamaño del lote
-    console.log("Comenzando la escritura por lotes");
+    console.log(`Comenzando la escritura por lotes en la tabla ${tableName}`);
     while (pageIndex * pageSize < data.length) {
       // Calcula el rango de líneas para la página actual
       const startIndex = pageIndex * pageSize;
@@ -95,7 +95,7 @@ const ddbDocClient = DynamoDBDocumentClient.from(client);
         const batchWriteParams = {
           RequestItems: {
             // Nombre de la tabla de DynamoDB
-            ["accounts-cbus-develop-table"]: jsonResult.map((item) => ({
+            [tableName]: jsonResult.map((item) => ({
               PutRequest: {
                 Item: item,
               },
