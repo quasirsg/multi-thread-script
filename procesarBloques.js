@@ -7,12 +7,18 @@ const rutaArchivoTexto = 'resultados.txt'; // Nombre del archivo de texto para g
 const tamanoBloque = 421; // Tamaño del bloque en bytes
 const bytesParaOmitirInicio = 1039; // Cantidad de bytes a omitir al principio
 const bytesParaOmitirDespues = 250; // Cantidad de bytes a omitir después de cada bloque
-const limiteDeBloques = 1743610; // Número máximo de bloques a guardar
+const limiteDeBloques = 10; // Número máximo de bloques a guardar
 const numNucleos = 3; // Número de núcleos deseados
 
 let bufferPrevio = Buffer.alloc(0); // Variable para almacenar fragmentos no procesados
 let bloquesGuardados = 0; // Variable para contar los bloques guardados
 let hilosTerminados = 0; // Contador de hilos de trabajadores que han terminado
+
+/**
+ * Extrae los primeros 7 caracteres si la cadena tiene 31 caracteres o los primeros 8 si tiene 30.
+ */
+const extraerDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
+
 
 const leerBloque = (fd, offset, tamano) => {
   return new Promise((resolve, reject) => {
@@ -43,6 +49,10 @@ if (isMainThread) {
 
     worker.on('message', (message) => {
       // Manejar el bloque procesado aquí
+      const payload = {
+        customer_id: extraerDni(message[0])
+      }
+      console.log(payload);
       resultadosFile.write(`Bloque: ${message}\n`);
     });
 
@@ -67,7 +77,7 @@ if (isMainThread) {
   // Hilo de trabajador
   const fd = fs.openSync(rutaArchivoBinario, 'r');
   let offset = workerData.offset;
-
+  offset = Math.floor(offset);
   const procesarSiguienteBloque = async () => {
     try {
       if (bloquesGuardados >= limiteDeBloques) {
@@ -95,7 +105,7 @@ if (isMainThread) {
       const match = textoCompleto.match(/^\d{30,31}/);
       if (match) {
         // El bloque cumple con el filtro, enviarlo al hilo principal
-        parentPort.postMessage(textoCompleto);
+        parentPort.postMessage(match);
       }
 
       bloquesGuardados++;
