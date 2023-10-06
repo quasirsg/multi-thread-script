@@ -20,7 +20,7 @@ const textFilePath = "results.txt"; // Name of the text file to save the results
 const blockSize = 421; // Block size in bytes
 const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
-const blockLimit = 27; // Maximum number of blocks to save
+const blockLimit = 500; // Maximum number of blocks to save
 const numCores = 2; // Desired number of CPU cores
 
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
@@ -31,17 +31,9 @@ const extractDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
 
 const extractCBU = (dniCbu) => dniCbu.slice(-22);
 
-const extractTypeId = (text, dniCbu) => {
-  const textAfterDniCbu = text.slice(dniCbu.length);
-  const spaceIndex = textAfterDniCbu.indexOf(" "); // Find the index of the first space in the remaining text
-  if (spaceIndex !== -1) {
-    const textAfterSpace = textAfterDniCbu.slice(spaceIndex + 1); // Extract text after the first space
-    const match = textAfterSpace.match(/\S{2}/); // Find the first pair of non-space characters
-    if (match) {
-      return match[0];
-    }
-  }
-  return null;
+const extractTypeId = (text) => {
+  const charactersToExtract = text.slice(50, 52); // Extraer los caracteres desde la posición 50 hasta la 52 (incluyendo el 50, excluyendo el 52)
+  return charactersToExtract || null; // Devolver los caracteres extraídos o null si no se encuentran suficientes caracteres.
 };
 
 const extractTextAfterTwoSpaces = (text) => {
@@ -87,13 +79,18 @@ const extractCharactersAfterText = (fullText, searchText, dniCbu) => {
   return null;
 };
 
-const nonNumericCharactersUntilSpace = (text) => {
-  const match = text.match(/\D\S*\s/); // Find the first non-numeric character followed by any non-space character until the first space
-  if (match) {
-    return match[0].trim(); // Remove leading and trailing spaces
+const extractAlias = (text) => {
+  const startIndex = 30; // Posición de inicio
+  const length = 20; // Longitud a extraer
+
+  const aliasText = text.slice(startIndex, startIndex + length);
+
+  if (aliasText) {
+    return aliasText;
   }
   return null;
 };
+
 
 const extractLetters = (fullText, searchText, characterCount) => {
   const extractedText = extractNumberOfCharacters(
@@ -212,7 +209,7 @@ if (isMainThread) {
       const fullText = match.input;
       const dni = extractDni(dniCbu);
       const cbu = extractCBU(dniCbu);
-      const alias = nonNumericCharactersUntilSpace(fullText);
+      const alias = extractAlias(fullText);
       const typeId = extractTypeId(fullText, dniCbu);
       const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
       const typeComplete = `${typeId}${typeName}`;
@@ -222,7 +219,8 @@ if (isMainThread) {
       const ownerType = extractLetters(fullText, bankName, 1);
       const cuit = findFirstNumericSequence(fullText);
       const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
-      console.log(fullName);
+      console.log(alias);
+      console.log(currency);
       const payload = {
         customer_id: dni,
         customer_id_cbu: `${dni}:${cbu}`,
@@ -231,7 +229,7 @@ if (isMainThread) {
             id: typeId,
             name: typeName,
           },
-          currency: currency[0],
+          currency: currency,
           bank: {
             id: bankId,
             name: bankName,
@@ -263,7 +261,6 @@ if (isMainThread) {
       if (threadsFinished === numCores) {
         // Agregar los payloads actuales al lote de escritura
         resultsFile.end(); 
-        await writeRecordsInBatches(payloads);
       }
     });
 
