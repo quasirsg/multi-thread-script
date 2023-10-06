@@ -262,7 +262,7 @@ if (isMainThread) {
       threadsFinished++;
       if (threadsFinished === numCores) {
         // Agregar los payloads actuales al lote de escritura
-        console.log(payloads.length);
+        resultsFile.end(); 
         await writeRecordsInBatches(payloads);
       }
     });
