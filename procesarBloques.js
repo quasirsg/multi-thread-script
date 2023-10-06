@@ -1,13 +1,26 @@
-const fs = require('fs');
-const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
+const fs = require("fs");
+const DynamoDBClient = require("@aws-sdk/client-dynamodb").DynamoDBClient;
+const DynamoDBDocumentClient =
+  require("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient;
+const BatchWriteCommand = require("@aws-sdk/lib-dynamodb").BatchWriteCommand;
+const {
+  Worker,
+  isMainThread,
+  parentPort,
+  workerData,
+} = require("worker_threads");
 
+// aws config
+const client = new DynamoDBClient({ region: "us-east-1" });
+const ddbDocClient = DynamoDBDocumentClient.from(client);
+const tableName = "accounts-cbus-develop-table";
 // Path to the binary file
-const binaryFilePath = 'mctabancaria.bin';
-const textFilePath = 'results.txt'; // Name of the text file to save the results
+const binaryFilePath = "mctabancaria.bin";
+const textFilePath = "results.txt"; // Name of the text file to save the results
 const blockSize = 421; // Block size in bytes
 const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
-const blockLimit = 53; // Maximum number of blocks to save
+const blockLimit = 27; // Maximum number of blocks to save
 const numCores = 2; // Desired number of CPU cores
 
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
@@ -20,7 +33,7 @@ const extractCBU = (dniCbu) => dniCbu.slice(-22);
 
 const extractTypeId = (text, dniCbu) => {
   const textAfterDniCbu = text.slice(dniCbu.length);
-  const spaceIndex = textAfterDniCbu.indexOf(' '); // Find the index of the first space in the remaining text
+  const spaceIndex = textAfterDniCbu.indexOf(" "); // Find the index of the first space in the remaining text
   if (spaceIndex !== -1) {
     const textAfterSpace = textAfterDniCbu.slice(spaceIndex + 1); // Extract text after the first space
     const match = textAfterSpace.match(/\S{2}/); // Find the first pair of non-space characters
@@ -40,7 +53,7 @@ const extractTextAfterTwoSpaces = (text) => {
     return text.slice(start);
   }
 
-  return null; 
+  return null;
 };
 
 // Function to extract the desired number of characters using extractTextAfterTwoSpaces
@@ -52,7 +65,7 @@ const extractNumberOfCharacters = (fullText, searchText, characterCount) => {
     const extractedText = extractTextAfterTwoSpaces(textAfter);
 
     if (extractedText) {
-      return extractedText.substring(0, characterCount) || '';
+      return extractedText.substring(0, characterCount) || "";
     }
   }
 
@@ -71,7 +84,7 @@ const extractCharactersAfterText = (fullText, searchText, dniCbu) => {
     }
   }
 
-  return null; 
+  return null;
 };
 
 const nonNumericCharactersUntilSpace = (text) => {
@@ -83,11 +96,15 @@ const nonNumericCharactersUntilSpace = (text) => {
 };
 
 const extractLetters = (fullText, searchText, characterCount) => {
-  const extractedText = extractNumberOfCharacters(fullText, searchText, characterCount);
+  const extractedText = extractNumberOfCharacters(
+    fullText,
+    searchText,
+    characterCount
+  );
 
   if (extractedText) {
     // Filtrar solo las letras del texto extraído
-    const lettersOnly = extractedText.replace(/[^a-zA-Z]/g, '');
+    const lettersOnly = extractedText.replace(/[^a-zA-Z]/g, "");
 
     if (lettersOnly.length > 0) {
       return lettersOnly;
@@ -98,8 +115,11 @@ const extractLetters = (fullText, searchText, characterCount) => {
 };
 
 const findFirstNumericSequence = (text) => {
+  // Omitir los primeros 31 caracteres del texto
+  const textAfterOmission = text.slice(31);
+
   const regex = /(\d{11}[A-Za-z])/;
-  const match = text.match(regex);
+  const match = textAfterOmission.match(regex);
 
   if (match) {
     const numbers = match[0].match(/\d{11}/);
@@ -110,11 +130,15 @@ const findFirstNumericSequence = (text) => {
 };
 
 const extractAndCleanCharacters = (fullText, searchText, dniCbu) => {
-  const extractedText = extractCharactersAfterText(fullText, searchText, dniCbu);
+  const extractedText = extractCharactersAfterText(
+    fullText,
+    searchText,
+    dniCbu
+  );
 
   if (extractedText) {
     // Reemplazar comas (',') y barras ('/') con espacios
-    const cleanedText = extractedText.replace(/[,/]/g, ' ');
+    const cleanedText = extractedText.replace(/[,/]/g, " ");
 
     if (cleanedText.length > 0) {
       return cleanedText;
@@ -138,6 +162,36 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
+const writeRecordsInBatches = async(records) =>{
+  const batchSize = 25; // Tamaño del lote
+  const totalRecords = records.length;
+  let startIndex = 0;
+  
+  while (startIndex < totalRecords) {
+    const endIndex = Math.min(startIndex + batchSize, totalRecords);
+    const batchRecords = records.slice(startIndex, endIndex);
+    
+    const batchWriteParams = {
+      RequestItems: {
+        [tableName]: batchRecords.map((item) => ({
+          PutRequest: {
+            Item: item,
+          },
+        })),
+      },
+    };
+
+    try {
+      await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
+      console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+    } catch (error) {
+      console.error("Error al escribir registros en DynamoDB:", error);
+      // Puedes agregar lógica de manejo de errores aquí si es necesario
+    }
+
+    startIndex += batchSize;
+  }
+}
 
 if (isMainThread) {
   // Main thread
@@ -152,7 +206,7 @@ if (isMainThread) {
     const offset = i * blockSize * (blockLimit / numCores);
     const worker = new Worker(__filename, { workerData: { offset } });
 
-    worker.on('message', ({block, match}) => {
+    worker.on("message", async ({ block, match }) => {
       // Handle the processed block here
       const dniCbu = match[0];
       const fullText = match.input;
@@ -165,53 +219,51 @@ if (isMainThread) {
       const currency = extractNumberOfCharacters(fullText, typeComplete, 2);
       const bankId = extractNumberOfCharacters(fullText, currency, 3);
       const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
-      const ownerType = extractLetters(fullText,bankName,1);
+      const ownerType = extractLetters(fullText, bankName, 1);
       const cuit = findFirstNumericSequence(fullText);
-      const fullName = extractAndCleanCharacters(fullText,cuit,dniCbu);
+      const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
+      console.log(fullName);
       const payload = {
         customer_id: dni,
         customer_id_cbu: `${dni}:${cbu}`,
         account_bank: {
-          type:{
+          type: {
             id: typeId,
-            name: typeName
+            name: typeName,
           },
           currency: currency[0],
           bank: {
             id: bankId,
-            name: bankName
+            name: bankName,
           },
           cbu: cbu,
-          alias: alias !== '' ? alias : null,
-          owner:{
+          alias: alias !== "" ? alias : null,
+          owner: {
             type: ownerType,
             fiscal_data: {
               name: "CUIT",
-              fiscal_key: cuit
+              fiscal_key: cuit,
             },
-            full_name: fullName
-          }
-        }
-      }
+            full_name: fullName,
+          },
+        },
+      };
       payloads.push(payload);
-      if (payloads.length === 25) {
-        console.log('hola');
-        payloads = [];
-      }
+      
       resultsFile.write(`Block: ${block}\n`);
     });
 
-    worker.on('error', (error) => {
-      console.error('Error in worker thread:', error);
+    worker.on("error", (error) => {
+      console.error("Error in worker thread:", error);
     });
-
-    worker.on('exit', () => {
+    worker.on("exit", async () => {
       console.log(`Worker thread finished: offset ${offset}`);
       // Check if all threads have finished
       threadsFinished++;
       if (threadsFinished === numCores) {
-        resultsFile.end(); // Close the text file after all threads have finished
+        // Agregar los payloads actuales al lote de escritura
         console.log(payloads.length);
+        await writeRecordsInBatches(payloads);
       }
     });
 
@@ -219,7 +271,7 @@ if (isMainThread) {
   }
 } else {
   // Worker thread
-  const fd = fs.openSync(binaryFilePath, 'r');
+  const fd = fs.openSync(binaryFilePath, "r");
   let offset = workerData.offset;
   offset = Math.floor(offset);
   const processNextBlock = async () => {
@@ -243,13 +295,13 @@ if (isMainThread) {
       const fullBuffer = Buffer.concat([previousBuffer, block]);
 
       // Convert the buffer to a text string
-      const fullText = fullBuffer.toString('latin1');
+      const fullText = fullBuffer.toString("latin1");
 
       // Check if the block starts with a 30 to 31-character number
       const match = fullText.match(/^\d{30,31}/);
       if (match) {
         // The block meets the criteria, send it to the main thread
-        parentPort.postMessage({block: fullText, match});
+        parentPort.postMessage({ block: fullText, match });
       }
 
       savedBlocks++;
@@ -263,7 +315,7 @@ if (isMainThread) {
         fs.closeSync(fd);
       }
     } catch (error) {
-      console.error('Error reading the block:', error);
+      console.error("Error reading the block:", error);
       fs.closeSync(fd);
     }
   };
