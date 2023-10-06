@@ -1,30 +1,134 @@
 const fs = require('fs');
 const { Worker, isMainThread, parentPort, workerData } = require('worker_threads');
 
-// Ruta del archivo binario
-const rutaArchivoBinario = 'mctabancaria.bin';
-const rutaArchivoTexto = 'resultados.txt'; // Nombre del archivo de texto para guardar los resultados
-const tamanoBloque = 421; // Tamaño del bloque en bytes
-const bytesParaOmitirInicio = 1039; // Cantidad de bytes a omitir al principio
-const bytesParaOmitirDespues = 250; // Cantidad de bytes a omitir después de cada bloque
-const limiteDeBloques = 10; // Número máximo de bloques a guardar
-const numNucleos = 3; // Número de núcleos deseados
+// Path to the binary file
+const binaryFilePath = 'mctabancaria.bin';
+const textFilePath = 'results.txt'; // Name of the text file to save the results
+const blockSize = 421; // Block size in bytes
+const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
+const bytesToSkipAfter = 250; // Number of bytes to skip after each block
+const blockLimit = 53; // Maximum number of blocks to save
+const numCores = 2; // Desired number of CPU cores
 
-let bufferPrevio = Buffer.alloc(0); // Variable para almacenar fragmentos no procesados
-let bloquesGuardados = 0; // Variable para contar los bloques guardados
-let hilosTerminados = 0; // Contador de hilos de trabajadores que han terminado
+let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
+let savedBlocks = 0; // Variable to count saved blocks
+let threadsFinished = 0; // Counter for worker threads that have finished
 
-/**
- * Extrae los primeros 7 caracteres si la cadena tiene 31 caracteres o los primeros 8 si tiene 30.
- */
-const extraerDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
+const extractDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
 
+const extractCBU = (dniCbu) => dniCbu.slice(-22);
 
-const leerBloque = (fd, offset, tamano) => {
+const extractTypeId = (text, dniCbu) => {
+  const textAfterDniCbu = text.slice(dniCbu.length);
+  const spaceIndex = textAfterDniCbu.indexOf(' '); // Find the index of the first space in the remaining text
+  if (spaceIndex !== -1) {
+    const textAfterSpace = textAfterDniCbu.slice(spaceIndex + 1); // Extract text after the first space
+    const match = textAfterSpace.match(/\S{2}/); // Find the first pair of non-space characters
+    if (match) {
+      return match[0];
+    }
+  }
+  return null;
+};
+
+const extractTextAfterTwoSpaces = (text) => {
+  const spacesRegex = /\s{2,}/; // Regular expression to find 2 or more spaces
+  const extractedText = text.match(spacesRegex);
+
+  if (extractedText) {
+    const start = text.indexOf(extractedText[0]) + extractedText[0].length;
+    return text.slice(start);
+  }
+
+  return null; 
+};
+
+// Function to extract the desired number of characters using extractTextAfterTwoSpaces
+const extractNumberOfCharacters = (fullText, searchText, characterCount) => {
+  const textIndex = fullText.indexOf(searchText);
+
+  if (textIndex !== -1) {
+    const textAfter = fullText.slice(textIndex + searchText.length);
+    const extractedText = extractTextAfterTwoSpaces(textAfter);
+
+    if (extractedText) {
+      return extractedText.substring(0, characterCount) || '';
+    }
+  }
+
+  return null;
+};
+
+const extractCharactersAfterText = (fullText, searchText, dniCbu) => {
+  const omittedText = fullText.slice(dniCbu.length); // Skip the first 31 characters
+  const textIndex = omittedText.indexOf(searchText);
+
+  if (textIndex !== -1) {
+    const textAfter = omittedText.slice(textIndex + searchText.length);
+    const extractedCharacters = textAfter.match(/(.+?(?=\s{2,}|\s*$))/);
+    if (extractedCharacters) {
+      return extractedCharacters[0].trim(); // Return the extracted characters without leading and trailing spaces.
+    }
+  }
+
+  return null; 
+};
+
+const nonNumericCharactersUntilSpace = (text) => {
+  const match = text.match(/\D\S*\s/); // Find the first non-numeric character followed by any non-space character until the first space
+  if (match) {
+    return match[0].trim(); // Remove leading and trailing spaces
+  }
+  return null;
+};
+
+const extractLetters = (fullText, searchText, characterCount) => {
+  const extractedText = extractNumberOfCharacters(fullText, searchText, characterCount);
+
+  if (extractedText) {
+    // Filtrar solo las letras del texto extraído
+    const lettersOnly = extractedText.replace(/[^a-zA-Z]/g, '');
+
+    if (lettersOnly.length > 0) {
+      return lettersOnly;
+    }
+  }
+
+  return null;
+};
+
+const findFirstNumericSequence = (text) => {
+  const regex = /(\d{11}[A-Za-z])/;
+  const match = text.match(regex);
+
+  if (match) {
+    const numbers = match[0].match(/\d{11}/);
+    return numbers ? numbers[0] : null;
+  }
+
+  return null;
+};
+
+const extractAndCleanCharacters = (fullText, searchText, dniCbu) => {
+  const extractedText = extractCharactersAfterText(fullText, searchText, dniCbu);
+
+  if (extractedText) {
+    // Reemplazar comas (',') y barras ('/') con espacios
+    const cleanedText = extractedText.replace(/[,/]/g, ' ');
+
+    if (cleanedText.length > 0) {
+      return cleanedText;
+    }
+  }
+
+  return null;
+};
+
+const readBlock = (fd, offset, size) => {
   return new Promise((resolve, reject) => {
-    const buffer = Buffer.alloc(tamano);
+    const buffer = Buffer.alloc(size);
 
-    fs.read(fd, buffer, 0, tamano, offset, (error, bytesRead, buffer) => {
+    fs.read(fd, buffer, 0, size, offset, (error, bytesRead, buffer) => {
       if (error) {
         reject(error);
       } else {
@@ -34,95 +138,135 @@ const leerBloque = (fd, offset, tamano) => {
   });
 };
 
+
 if (isMainThread) {
-  // Hilo principal
+  // Main thread
+  let payloads = [];
+  // Create a text file to save the results
+  const resultsFile = fs.createWriteStream(textFilePath);
 
-  // Crear archivo de texto para guardar los resultados
-  const resultadosFile = fs.createWriteStream(rutaArchivoTexto);
-
-  // Crear hilos de trabajadores para procesar los bloques
+  // Create worker threads to process the blocks
   const workers = [];
 
-  for (let i = 0; i < numNucleos; i++) {
-    const offset = i * tamanoBloque * (limiteDeBloques / numNucleos);
+  for (let i = 0; i < numCores; i++) {
+    const offset = i * blockSize * (blockLimit / numCores);
     const worker = new Worker(__filename, { workerData: { offset } });
 
-    worker.on('message', (message) => {
-      // Manejar el bloque procesado aquí
+    worker.on('message', ({block, match}) => {
+      // Handle the processed block here
+      const dniCbu = match[0];
+      const fullText = match.input;
+      const dni = extractDni(dniCbu);
+      const cbu = extractCBU(dniCbu);
+      const alias = nonNumericCharactersUntilSpace(fullText);
+      const typeId = extractTypeId(fullText, dniCbu);
+      const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
+      const typeComplete = `${typeId}${typeName}`;
+      const currency = extractNumberOfCharacters(fullText, typeComplete, 2);
+      const bankId = extractNumberOfCharacters(fullText, currency, 3);
+      const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
+      const ownerType = extractLetters(fullText,bankName,1);
+      const cuit = findFirstNumericSequence(fullText);
+      const fullName = extractAndCleanCharacters(fullText,cuit,dniCbu);
       const payload = {
-        customer_id: extraerDni(message[0])
+        customer_id: dni,
+        customer_id_cbu: `${dni}:${cbu}`,
+        account_bank: {
+          type:{
+            id: typeId,
+            name: typeName
+          },
+          currency: currency[0],
+          bank: {
+            id: bankId,
+            name: bankName
+          },
+          cbu: cbu,
+          alias: alias !== '' ? alias : null,
+          owner:{
+            type: ownerType,
+            fiscal_data: {
+              name: "CUIT",
+              fiscal_key: cuit
+            },
+            full_name: fullName
+          }
+        }
       }
-      console.log(payload);
-      resultadosFile.write(`Bloque: ${message}\n`);
+      payloads.push(payload);
+      if (payloads.length === 25) {
+        console.log('hola');
+        payloads = [];
+      }
+      resultsFile.write(`Block: ${block}\n`);
     });
 
     worker.on('error', (error) => {
-      console.error('Error en el hilo de trabajador:', error);
+      console.error('Error in worker thread:', error);
     });
 
     worker.on('exit', () => {
-      console.log(`Hilo de trabajador terminado: offset ${offset}`);
-      
-      // Verificar si todos los hilos han terminado
-      hilosTerminados++;
-      if (hilosTerminados === numNucleos) {
-        resultadosFile.end(); // Cerrar el archivo de texto después de que todos los hilos hayan terminado
-        console.log('Lectura de bloques completa. Resultados guardados en', rutaArchivoTexto);
+      console.log(`Worker thread finished: offset ${offset}`);
+      // Check if all threads have finished
+      threadsFinished++;
+      if (threadsFinished === numCores) {
+        resultsFile.end(); // Close the text file after all threads have finished
+        console.log(payloads.length);
       }
     });
 
     workers.push(worker);
   }
 } else {
-  // Hilo de trabajador
-  const fd = fs.openSync(rutaArchivoBinario, 'r');
+  // Worker thread
+  const fd = fs.openSync(binaryFilePath, 'r');
   let offset = workerData.offset;
   offset = Math.floor(offset);
-  const procesarSiguienteBloque = async () => {
+  const processNextBlock = async () => {
     try {
-      if (bloquesGuardados >= limiteDeBloques) {
-        // Detener la lectura después de 500 bloques guardados
+      if (savedBlocks >= blockLimit) {
+        // Stop reading after 500 saved blocks
         fs.closeSync(fd);
         return;
       }
 
       if (offset === 0) {
-        // Si es la primera vez, omitir los primeros 1039 bytes
-        offset += bytesParaOmitirInicio;
+        // If it's the first time, skip the first 1039 bytes
+        offset += bytesToSkipStart;
       } else {
-        offset += bytesParaOmitirDespues; // Omitir 250 bytes después de cada bloque
+        offset += bytesToSkipAfter; // Skip 250 bytes after each block
       }
 
-      const bloque = await leerBloque(fd, offset, tamanoBloque);
+      const block = await readBlock(fd, offset, blockSize);
 
-      // Combinar el bloque actual con el previo para buscar el patrón
-      const bufferCompleto = Buffer.concat([bufferPrevio, bloque]);
+      // Combine the current block with the previous one to search for the pattern
+      const fullBuffer = Buffer.concat([previousBuffer, block]);
 
-      // Convertir el buffer en una cadena de texto
-      const textoCompleto = bufferCompleto.toString('latin1');
+      // Convert the buffer to a text string
+      const fullText = fullBuffer.toString('latin1');
 
-      // Verificar si el bloque comienza con un número de 30 a 31 caracteres
-      const match = textoCompleto.match(/^\d{30,31}/);
+      // Check if the block starts with a 30 to 31-character number
+      const match = fullText.match(/^\d{30,31}/);
       if (match) {
-        // El bloque cumple con el filtro, enviarlo al hilo principal
-        parentPort.postMessage(match);
+        // The block meets the criteria, send it to the main thread
+        parentPort.postMessage({block: fullText, match});
       }
 
-      bloquesGuardados++;
+      savedBlocks++;
 
-      offset += tamanoBloque;
+      offset += blockSize;
 
-      if (bloque.length === tamanoBloque) {
-        procesarSiguienteBloque();
+      if (block.length === blockSize) {
+        processNextBlock();
       } else {
-        // Se ha llegado al final del archivo
+        // Reached the end of the file
         fs.closeSync(fd);
       }
     } catch (error) {
-      console.error('Error al leer el bloque:', error);
+      console.error('Error reading the block:', error);
       fs.closeSync(fd);
     }
   };
 
-  procesarSiguienteBloque();
+  processNextBlock();
 }
