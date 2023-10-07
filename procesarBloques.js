@@ -83,9 +83,9 @@ const extractAlias = (text) => {
   const startIndex = 30; // Posición de inicio
   const length = 20; // Longitud a extraer
 
-  const aliasText = text.slice(startIndex, startIndex + length);
+  const aliasText = text.slice(startIndex, startIndex + length).trim();
 
-  if (aliasText) {
+  if (aliasText !== "") {
     return aliasText;
   }
   return null;
@@ -219,8 +219,6 @@ if (isMainThread) {
       const ownerType = extractLetters(fullText, bankName, 1);
       const cuit = findFirstNumericSequence(fullText);
       const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
-      console.log(alias);
-      console.log(currency);
       const payload = {
         customer_id: dni,
         customer_id_cbu: `${dni}:${cbu}`,
@@ -229,7 +227,7 @@ if (isMainThread) {
             id: typeId,
             name: typeName,
           },
-          currency: currency,
+          currency: currency[0],
           bank: {
             id: bankId,
             name: bankName,
