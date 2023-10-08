@@ -190,47 +190,36 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async (records) => {
+const writeRecordsInBatches = async(records) =>{
   const batchSize = 25; // Tamaño del lote
   const totalRecords = records.length;
-  const numBatches = Math.ceil(totalRecords / batchSize);
-
-  // Crear un arreglo para almacenar las promesas de los hilos de escritura
-  const writePromises = [];
-
-  for (let i = 0; i < numBatches; i++) {
-    const startIndex = i * batchSize;
+  let startIndex = 0;
+  
+  while (startIndex < totalRecords) {
     const endIndex = Math.min(startIndex + batchSize, totalRecords);
     const batchRecords = records.slice(startIndex, endIndex);
+    
+    const batchWriteParams = {
+      RequestItems: {
+        [tableName]: batchRecords.map((item) => ({
+          PutRequest: {
+            Item: item,
+          },
+        })),
+      },
+    };
 
-    // Crear un nuevo Worker para la escritura en este lote
-    const writeWorker = new Worker(__filename, {
-      workerData: { batchRecords },
-    });
+    try {
+      await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
+      console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+    } catch (error) {
+      console.error("Error al escribir registros en DynamoDB:", error);
+      // Puedes agregar lógica de manejo de errores aquí si es necesario
+    }
 
-    // Definir una promesa para esperar a que el Worker complete su escritura
-    const writePromise = new Promise((resolve, reject) => {
-      writeWorker.on("message", ({ writtenCount }) => {
-        resolve(writtenCount);
-      });
-
-      writeWorker.on("error", (error) => {
-        reject(error);
-      });
-    });
-
-    // Agregar la promesa al arreglo de promesas de escritura
-    writePromises.push(writePromise);
-
-    // Iniciar el Worker para que escriba el lote de registros
-    writeWorker.postMessage({ action: "writeBatch" });
+    startIndex += batchSize;
   }
-
-  // Esperar a que todas las promesas de escritura se completen
-  const results = await Promise.all(writePromises);
-  const totalWritten = results.reduce((acc, count) => acc + count, 0);
-  console.log(`Escritos ${totalWritten} registros en DynamoDB.`);
-};
+}
 
 if (isMainThread) {
   // Main thread
