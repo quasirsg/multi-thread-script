@@ -13,7 +13,7 @@ const {
 // aws config
 const client = new DynamoDBClient({ region: "us-east-1" });
 const ddbDocClient = DynamoDBDocumentClient.from(client);
-const tableName = "accounts-cbus-staging-table";
+const tableName = "accounts-cbus-table";
 // Path to the binary file
 const binaryFilePath = "mctabancaria.bin";
 const textFilePath = "results.txt"; // Name of the text file to save the results
@@ -22,7 +22,7 @@ const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
 const blockLimit = 1743610; // Maximum number of blocks to save
 const numCores = 3; // Desired number of CPU cores
-
+let escritos = 0;
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
 let savedBlocks = 0; // Variable to count saved blocks
 let threadsFinished = 0; // Counter for worker threads that have finished
@@ -158,6 +158,23 @@ const extractCreatedDate = (inputString) => {
 
   return secuenciaNumerica;
 }
+const extractCurrency = (inputString) => {
+  // Omitir los primeros 50 caracteres
+  inputString = inputString.slice(72);
+
+  // Encontrar los primeros dos caracteres que no sean espacios
+  let currency = '';
+  for (const char of inputString) {
+      if (char !== ' ') {
+          currency += char;
+          if (currency.length === 2) {
+              break;
+          }
+      }
+  }
+
+  return currency;
+};
 
 const readBlock = (fd, offset, size) => {
   return new Promise((resolve, reject) => {
@@ -173,36 +190,47 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async(records) =>{
+const writeRecordsInBatches = async (records) => {
   const batchSize = 25; // Tamaño del lote
   const totalRecords = records.length;
-  let startIndex = 0;
-  
-  while (startIndex < totalRecords) {
+  const numBatches = Math.ceil(totalRecords / batchSize);
+
+  // Crear un arreglo para almacenar las promesas de los hilos de escritura
+  const writePromises = [];
+
+  for (let i = 0; i < numBatches; i++) {
+    const startIndex = i * batchSize;
     const endIndex = Math.min(startIndex + batchSize, totalRecords);
     const batchRecords = records.slice(startIndex, endIndex);
-    
-    const batchWriteParams = {
-      RequestItems: {
-        [tableName]: batchRecords.map((item) => ({
-          PutRequest: {
-            Item: item,
-          },
-        })),
-      },
-    };
 
-    try {
-      await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
-      console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
-    } catch (error) {
-      console.error("Error al escribir registros en DynamoDB:", error);
-      // Puedes agregar lógica de manejo de errores aquí si es necesario
-    }
+    // Crear un nuevo Worker para la escritura en este lote
+    const writeWorker = new Worker(__filename, {
+      workerData: { batchRecords },
+    });
 
-    startIndex += batchSize;
+    // Definir una promesa para esperar a que el Worker complete su escritura
+    const writePromise = new Promise((resolve, reject) => {
+      writeWorker.on("message", ({ writtenCount }) => {
+        resolve(writtenCount);
+      });
+
+      writeWorker.on("error", (error) => {
+        reject(error);
+      });
+    });
+
+    // Agregar la promesa al arreglo de promesas de escritura
+    writePromises.push(writePromise);
+
+    // Iniciar el Worker para que escriba el lote de registros
+    writeWorker.postMessage({ action: "writeBatch" });
   }
-}
+
+  // Esperar a que todas las promesas de escritura se completen
+  const results = await Promise.all(writePromises);
+  const totalWritten = results.reduce((acc, count) => acc + count, 0);
+  console.log(`Escritos ${totalWritten} registros en DynamoDB.`);
+};
 
 if (isMainThread) {
   // Main thread
@@ -226,8 +254,7 @@ if (isMainThread) {
       const alias = extractAlias(fullText);
       const typeId = extractTypeId(fullText, dniCbu);
       const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
-      const typeComplete = `${typeId}${typeName}`;
-      const currency = extractNumberOfCharacters(fullText, typeComplete, 2);
+      const currency = extractCurrency(fullText);
       const bankId = extractNumberOfCharacters(fullText, currency, 3);
       const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
       const ownerType = extractLetters(fullText, bankName, 1);
@@ -263,8 +290,6 @@ if (isMainThread) {
         updated_date: null
       };
       payloads.push(payload);
-      console.log(payload);
-      resultsFile.write(`Block: ${block}\n`);
     });
 
     worker.on("error", (error) => {
@@ -276,6 +301,9 @@ if (isMainThread) {
       threadsFinished++;
       if (threadsFinished === numCores) {
         // Agregar los payloads actuales al lote de escritura
+        console.log("Comenzando escritura en dynamodb");
+        await writeRecordsInBatches(payloads);
+        console.log(`${escritos} registros escritos en la dynamodb`);
         resultsFile.end(); 
       }
     });
@@ -284,6 +312,7 @@ if (isMainThread) {
   }
 } else {
   // Worker thread
+  console.log("Procesando bloques");
   const fd = fs.openSync(binaryFilePath, "r");
   let offset = workerData.offset;
   offset = Math.floor(offset);
