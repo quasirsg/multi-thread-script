@@ -13,15 +13,15 @@ const {
 // aws config
 const client = new DynamoDBClient({ region: "us-east-1" });
 const ddbDocClient = DynamoDBDocumentClient.from(client);
-const tableName = "accounts-cbus-develop-table";
+const tableName = "accounts-cbus-staging-table";
 // Path to the binary file
 const binaryFilePath = "mctabancaria.bin";
 const textFilePath = "results.txt"; // Name of the text file to save the results
 const blockSize = 421; // Block size in bytes
 const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
-const blockLimit = 500; // Maximum number of blocks to save
-const numCores = 2; // Desired number of CPU cores
+const blockLimit = 1743610; // Maximum number of blocks to save
+const numCores = 3; // Desired number of CPU cores
 
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
 let savedBlocks = 0; // Variable to count saved blocks
@@ -145,6 +145,20 @@ const extractAndCleanCharacters = (fullText, searchText, dniCbu) => {
   return null;
 };
 
+const extractCreatedDate = (inputString) => {
+  // Omitir los primeros 169 caracteres
+  const textoSinPrimeros169Caracteres = inputString.slice(169);
+
+  // Encontrar la primera secuencia de 8 caracteres numéricos que no sean todos ceros
+  const regex = /([1-9]\d{7})/; // Buscar un número que no comience con ceros
+  const match = textoSinPrimeros169Caracteres.match(regex);
+
+  // Verificar si se encontró una secuencia numérica
+  const secuenciaNumerica = match ? match[1] : null;
+
+  return secuenciaNumerica;
+}
+
 const readBlock = (fd, offset, size) => {
   return new Promise((resolve, reject) => {
     const buffer = Buffer.alloc(size);
@@ -219,6 +233,7 @@ if (isMainThread) {
       const ownerType = extractLetters(fullText, bankName, 1);
       const cuit = findFirstNumericSequence(fullText);
       const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
+      const createdDate = extractCreatedDate(fullText)
       const payload = {
         customer_id: dni,
         customer_id_cbu: `${dni}:${cbu}`,
@@ -237,15 +252,18 @@ if (isMainThread) {
           owner: {
             type: ownerType,
             fiscal_data: {
-              name: "CUIT",
+              id: null,
+              name: null,
               fiscal_key: cuit,
             },
             full_name: fullName,
           },
         },
+        created_date: createdDate,
+        updated_date: null
       };
       payloads.push(payload);
-      
+      console.log(payload);
       resultsFile.write(`Block: ${block}\n`);
     });
 
