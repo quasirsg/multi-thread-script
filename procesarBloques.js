@@ -9,22 +9,17 @@ const {
   parentPort,
   workerData,
 } = require("worker_threads");
-
 // aws config
 const client = new DynamoDBClient({ region: "us-east-1" });
 const ddbDocClient = DynamoDBDocumentClient.from(client);
 const tableName = "accounts-cbus-table";
 // Path to the binary file
 const binaryFilePath = "mctabancaria.bin";
-const textFilePath = "results.txt"; // Name of the text file to save the results
 const blockSize = 421; // Block size in bytes
 const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
-const blockLimit = 1743610; // Maximum number of blocks to save
 const numCores = 3; // Desired number of CPU cores
-let escritos = 0;
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
-let savedBlocks = 0; // Variable to count saved blocks
 let threadsFinished = 0; // Counter for worker threads that have finished
 
 const extractDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
@@ -91,7 +86,6 @@ const extractAlias = (text) => {
   return null;
 };
 
-
 const extractLetters = (fullText, searchText, characterCount) => {
   const extractedText = extractNumberOfCharacters(
     fullText,
@@ -157,20 +151,20 @@ const extractCreatedDate = (inputString) => {
   const secuenciaNumerica = match ? match[1] : null;
 
   return secuenciaNumerica;
-}
+};
 const extractCurrency = (inputString) => {
   // Omitir los primeros 50 caracteres
   inputString = inputString.slice(72);
 
   // Encontrar los primeros dos caracteres que no sean espacios
-  let currency = '';
+  let currency = "";
   for (const char of inputString) {
-      if (char !== ' ') {
-          currency += char;
-          if (currency.length === 2) {
-              break;
-          }
+    if (char !== " ") {
+      currency += char;
+      if (currency.length === 2) {
+        break;
       }
+    }
   }
 
   return currency;
@@ -190,15 +184,15 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async(records) =>{
+const writeRecordsInBatches = async (records) => {
   const batchSize = 25; // Tamaño del lote
   const totalRecords = records.length;
   let startIndex = 0;
-  
+
   while (startIndex < totalRecords) {
     const endIndex = Math.min(startIndex + batchSize, totalRecords);
     const batchRecords = records.slice(startIndex, endIndex);
-    
+
     const batchWriteParams = {
       RequestItems: {
         [tableName]: batchRecords.map((item) => ({
@@ -219,66 +213,32 @@ const writeRecordsInBatches = async(records) =>{
 
     startIndex += batchSize;
   }
-}
+};
 
+function writeRecordsInBatchesAsync(payloads) {
+  return new Promise(async (resolve, reject) => {
+    try {
+      await writeRecordsInBatches(payloads);
+      resolve();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
 if (isMainThread) {
   // Main thread
-  let payloads = [];
+  let count = 0;
   // Create a text file to save the results
-  const resultsFile = fs.createWriteStream(textFilePath);
 
   // Create worker threads to process the blocks
   const workers = [];
 
   for (let i = 0; i < numCores; i++) {
-    const offset = i * blockSize * (blockLimit / numCores);
+    const offset = i * blockSize;
     const worker = new Worker(__filename, { workerData: { offset } });
 
-    worker.on("message", async ({ block, match }) => {
-      // Handle the processed block here
-      const dniCbu = match[0];
-      const fullText = match.input;
-      const dni = extractDni(dniCbu);
-      const cbu = extractCBU(dniCbu);
-      const alias = extractAlias(fullText);
-      const typeId = extractTypeId(fullText, dniCbu);
-      const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
-      const currency = extractCurrency(fullText);
-      const bankId = extractNumberOfCharacters(fullText, currency, 3);
-      const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
-      const ownerType = extractLetters(fullText, bankName, 1);
-      const cuit = findFirstNumericSequence(fullText);
-      const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
-      const createdDate = extractCreatedDate(fullText)
-      const payload = {
-        customer_id: dni,
-        customer_id_cbu: `${dni}:${cbu}`,
-        account_bank: {
-          type: {
-            id: typeId,
-            name: typeName,
-          },
-          currency: currency[0],
-          bank: {
-            id: bankId,
-            name: bankName,
-          },
-          cbu: cbu,
-          alias: alias !== "" ? alias : null,
-          owner: {
-            type: ownerType,
-            fiscal_data: {
-              id: null,
-              name: null,
-              fiscal_key: cuit,
-            },
-            full_name: fullName,
-          },
-        },
-        created_date: createdDate,
-        updated_date: null
-      };
-      payloads.push(payload);
+    worker.on("message", async ({ ccount }) => {
+      count += ccount;
     });
 
     worker.on("error", (error) => {
@@ -289,11 +249,7 @@ if (isMainThread) {
       // Check if all threads have finished
       threadsFinished++;
       if (threadsFinished === numCores) {
-        // Agregar los payloads actuales al lote de escritura
-        console.log("Comenzando escritura en dynamodb");
-        await writeRecordsInBatches(payloads);
-        console.log(`${escritos} registros escritos en la dynamodb`);
-        resultsFile.end(); 
+        console.log(`${count} registros escritos en la dynamodb`);
       }
     });
 
@@ -301,18 +257,15 @@ if (isMainThread) {
   }
 } else {
   // Worker thread
+
   console.log("Procesando bloques");
+  let payloads = [];
+  let count = 0;
   const fd = fs.openSync(binaryFilePath, "r");
   let offset = workerData.offset;
   offset = Math.floor(offset);
   const processNextBlock = async () => {
     try {
-      if (savedBlocks >= blockLimit) {
-        // Stop reading after 500 saved blocks
-        fs.closeSync(fd);
-        return;
-      }
-
       if (offset === 0) {
         // If it's the first time, skip the first 1039 bytes
         offset += bytesToSkipStart;
@@ -331,11 +284,61 @@ if (isMainThread) {
       // Check if the block starts with a 30 to 31-character number
       const match = fullText.match(/^\d{30,31}/);
       if (match) {
-        // The block meets the criteria, send it to the main thread
-        parentPort.postMessage({ block: fullText, match });
+        // Handle the processed block here
+        const dniCbu = match[0];
+        const fullText = match.input;
+        const dni = extractDni(dniCbu);
+        const cbu = extractCBU(dniCbu);
+        const alias = extractAlias(fullText);
+        const typeId = extractTypeId(fullText, dniCbu);
+        const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
+        const currency = extractCurrency(fullText);
+        const bankId = extractNumberOfCharacters(fullText, currency, 3);
+        const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
+        const ownerType = extractLetters(fullText, bankName, 1);
+        const cuit = findFirstNumericSequence(fullText);
+        const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
+        const createdDate = extractCreatedDate(fullText);
+        const payload = {
+          customer_id: dni,
+          customer_id_cbu: `${dni}:${cbu}`,
+          account_bank: {
+            type: {
+              id: typeId,
+              name: typeName,
+            },
+            currency: currency[0],
+            bank: {
+              id: bankId,
+              name: bankName,
+            },
+            cbu: cbu,
+            alias: alias !== "" ? alias : null,
+            owner: {
+              type: ownerType,
+              fiscal_data: {
+                id: null,
+                name: null,
+                fiscal_key: cuit,
+              },
+              full_name: fullName,
+            },
+          },
+          created_date: createdDate,
+          updated_date: null,
+        };
+        payloads.push(payload);
+        if (payloads.length === 25) {
+          writeRecordsInBatchesAsync(payloads)
+            .then(async () => {
+              count += payloads.length;
+              payloads = [];
+            })
+            .catch((error) => {
+              console.error("Error al escribir registros en DynamoDB:", error);
+            });
+        }
       }
-
-      savedBlocks++;
 
       offset += blockSize;
 
@@ -344,6 +347,23 @@ if (isMainThread) {
       } else {
         // Reached the end of the file
         fs.closeSync(fd);
+
+        // Verificar si quedan registros sin procesar
+        if (payloads.length > 0) {
+          // Escribir los registros restantes
+          writeRecordsInBatchesAsync(payloads)
+            .then(async () => {
+              count += payloads.length;
+              payloads = [];
+              parentPort.postMessage({ ccount: count });
+            })
+            .catch((error) => {
+              console.error("Error al escribir registros en DynamoDB:", error);
+            });
+        } else {
+          // No hay registros para procesar, simplemente notificar al hilo principal
+          parentPort.postMessage({ ccount: count });
+        }
       }
     } catch (error) {
       console.error("Error reading the block:", error);
