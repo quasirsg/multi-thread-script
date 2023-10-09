@@ -257,7 +257,6 @@ if (isMainThread) {
   }
 } else {
   // Worker thread
-
   console.log("Procesando bloques");
   let payloads = [];
   let count = 0;
@@ -272,15 +271,11 @@ if (isMainThread) {
       } else {
         offset += bytesToSkipAfter; // Skip 250 bytes after each block
       }
-
       const block = await readBlock(fd, offset, blockSize);
-
       // Combine the current block with the previous one to search for the pattern
       const fullBuffer = Buffer.concat([previousBuffer, block]);
-
       // Convert the buffer to a text string
       const fullText = fullBuffer.toString("latin1");
-
       // Check if the block starts with a 30 to 31-character number
       const match = fullText.match(/^\d{30,31}/);
       if (match) {
@@ -339,7 +334,6 @@ if (isMainThread) {
             });
         }
       }
-
       offset += blockSize;
 
       if (block.length === blockSize) {
@@ -347,7 +341,6 @@ if (isMainThread) {
       } else {
         // Reached the end of the file
         fs.closeSync(fd);
-
         // Verificar si quedan registros sin procesar
         if (payloads.length > 0) {
           // Escribir los registros restantes
@@ -370,6 +363,5 @@ if (isMainThread) {
       fs.closeSync(fd);
     }
   };
-
   processNextBlock();
 }
