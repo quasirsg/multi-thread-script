@@ -9,10 +9,7 @@ const {
   parentPort,
   workerData,
 } = require("worker_threads");
-// aws config
-const client = new DynamoDBClient({ region: "us-east-1" });
-const ddbDocClient = DynamoDBDocumentClient.from(client);
-const tableName = "accounts-cbus-table";
+const inquirer = require("inquirer");
 // Path to the binary file
 const binaryFilePath = "mctabancaria.bin";
 const blockSize = 421; // Block size in bytes
@@ -25,6 +22,73 @@ let threadsFinished = 0; // Counter for worker threads that have finished
 const extractDni = (dniCbu) => dniCbu.slice(0, dniCbu.length === 31 ? 7 : 8);
 
 const extractCBU = (dniCbu) => dniCbu.slice(-22);
+
+const configureAWSClient = async () => {
+  const answers = await inquirer.prompt([
+    {
+      type: "list",
+      name: "authMethod",
+      message: "Selecciona una opción de autenticación:",
+      choices: [
+        "Usar el perfil default",
+        "Introducir credenciales manualmente",
+        "Introducir qué perfil utilizar",
+      ],
+    },
+  ]);
+
+  switch (answers.authMethod) {
+    case "Usar el perfil default":
+      // Opción 1: Usar el perfil default
+      return { region: "us-east-1" };
+    case "Introducir credenciales manualmente":
+      // Opción 2: Introducir credenciales manualmente
+      const credentialsAnswers = await inquirer.prompt([
+        {
+          type: "input",
+          name: "accessKeyId",
+          message: "Introduce tu Access Key ID:",
+        },
+        {
+          type: "input",
+          name: "secretAccessKey",
+          message: "Introduce tu Secret Access Key:",
+        },
+        {
+          type: "input",
+          name: "sessionToken",
+          message: "Introduce tu Session Token:",
+        },
+      ]);
+
+      return {
+        region: "us-east-1",
+        credentials: {
+          accessKeyId: credentialsAnswers.accessKeyId,
+          secretAccessKey: credentialsAnswers.secretAccessKey,
+          sessionToken: credentialsAnswers.sessionToken
+        },
+      };
+    case "Introducir qué perfil utilizar":
+      // Opción 3: Introducir qué perfil utilizar
+      const profileAnswer = await inquirer.prompt([
+        {
+          type: "input",
+          name: "profileName",
+          message: "Introduce el nombre del perfil:",
+        },
+      ]);
+
+      return {
+        region: "us-east-1",
+        profile: profileAnswer.profileName,
+      };
+    default:
+      console.log("Opción no válida.");
+      process.exit(1);
+  }
+};
+
 
 const extractTypeId = (text) => {
   const charactersToExtract = text.slice(50, 52); // Extraer los caracteres desde la posición 50 hasta la 52 (incluyendo el 50, excluyendo el 52)
@@ -184,7 +248,7 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async (records) => {
+const writeRecordsInBatches = async (records,client,tableName) => {
   const batchSize = 25; // Tamaño del lote
   const totalRecords = records.length;
   let startIndex = 0;
@@ -204,7 +268,7 @@ const writeRecordsInBatches = async (records) => {
     };
 
     try {
-      await ddbDocClient.send(new BatchWriteCommand(batchWriteParams));
+      await client.send(new BatchWriteCommand(batchWriteParams));
       console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
     } catch (error) {
       console.error("Error al escribir registros en DynamoDB:", error);
@@ -215,153 +279,159 @@ const writeRecordsInBatches = async (records) => {
   }
 };
 
-function writeRecordsInBatchesAsync(payloads) {
+function writeRecordsInBatchesAsync(payloads,client,tableName) {
   return new Promise(async (resolve, reject) => {
     try {
-      await writeRecordsInBatches(payloads);
+      await writeRecordsInBatches(payloads,client,tableName);
       resolve();
     } catch (error) {
       reject(error);
     }
   });
 }
-if (isMainThread) {
-  // Main thread
-  let count = 0;
-  // Create a text file to save the results
-
-  // Create worker threads to process the blocks
-  const workers = [];
-
-  for (let i = 0; i < numCores; i++) {
-    const offset = i * blockSize;
-    const worker = new Worker(__filename, { workerData: { offset } });
-
-    worker.on("message", async ({ ccount }) => {
-      count += ccount;
-    });
-
-    worker.on("error", (error) => {
-      console.error("Error in worker thread:", error);
-    });
-    worker.on("exit", async () => {
-      console.log(`Worker thread finished: offset ${offset}`);
-      // Check if all threads have finished
-      threadsFinished++;
-      if (threadsFinished === numCores) {
-        console.log(`${count} registros escritos en la dynamodb`);
-      }
-    });
-
-    workers.push(worker);
-  }
-} else {
-  // Worker thread
-  console.log("Procesando bloques");
-  let payloads = [];
-  let count = 0;
-  const fd = fs.openSync(binaryFilePath, "r");
-  let offset = workerData.offset;
-  offset = Math.floor(offset);
-  const processNextBlock = async () => {
-    try {
-      if (offset === 0) {
-        // If it's the first time, skip the first 1039 bytes
-        offset += bytesToSkipStart;
-      } else {
-        offset += bytesToSkipAfter; // Skip 250 bytes after each block
-      }
-      const block = await readBlock(fd, offset, blockSize);
-      // Combine the current block with the previous one to search for the pattern
-      const fullBuffer = Buffer.concat([previousBuffer, block]);
-      // Convert the buffer to a text string
-      const fullText = fullBuffer.toString("latin1");
-      // Check if the block starts with a 30 to 31-character number
-      const match = fullText.match(/^\d{30,31}/);
-      if (match) {
-        // Handle the processed block here
-        const dniCbu = match[0];
-        const fullText = match.input;
-        const dni = extractDni(dniCbu);
-        const cbu = extractCBU(dniCbu);
-        const alias = extractAlias(fullText);
-        const typeId = extractTypeId(fullText, dniCbu);
-        const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
-        const currency = extractCurrency(fullText);
-        const bankId = extractNumberOfCharacters(fullText, currency, 3);
-        const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
-        const ownerType = extractLetters(fullText, bankName, 1);
-        const cuit = findFirstNumericSequence(fullText);
-        const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
-        const createdDate = extractCreatedDate(fullText);
-        const payload = {
-          customer_id: dni,
-          customer_id_cbu: `${dni}:${cbu}`,
-          account_bank: {
-            type: {
-              id: typeId,
-              name: typeName,
-            },
-            currency: currency[0],
-            bank: {
-              id: bankId,
-              name: bankName,
-            },
-            cbu: cbu,
-            alias: alias !== "" ? alias : '',
-            owner: {
-              type: ownerType,
-              fiscal_data: {
-                id: null,
-                name: '',
-                fiscal_key: cuit,
-              },
-              full_name: fullName,
-            },
-          },
-          created_date: createdDate,
-          updated_date: null,
-        };
-        payloads.push(payload);
-        if (payloads.length === 25) {
-          writeRecordsInBatchesAsync(payloads)
-            .then(async () => {
-              count += payloads.length;
-              payloads = [];
-            })
-            .catch((error) => {
-              console.error("Error al escribir registros en DynamoDB:", error);
-            });
+(async function () {
+  if (isMainThread) {
+    // Main thread
+    let count = 0;
+    // option to configure awsClient
+    const option = await configureAWSClient();
+    // Create worker threads to process the blocks
+    const workers = [];
+    for (let i = 0; i < numCores; i++) {
+      const offset = i * blockSize;
+      const worker = new Worker(__filename, { workerData: { offset,option } });
+  
+      worker.on("message", async ({ ccount }) => {
+        count += ccount;
+      });
+  
+      worker.on("error", (error) => {
+        console.error("Error in worker thread:", error);
+      });
+      worker.on("exit", async () => {
+        console.log(`Worker thread finished: offset ${offset}`);
+        // Check if all threads have finished
+        threadsFinished++;
+        if (threadsFinished === numCores) {
+          console.log(`${count} registros escritos en la dynamodb`);
         }
-      }
-      offset += blockSize;
-
-      if (block.length === blockSize) {
-        processNextBlock();
-      } else {
-        // Reached the end of the file
-        fs.closeSync(fd);
-        // Verificar si quedan registros sin procesar
-        if (payloads.length > 0) {
-          // Escribir los registros restantes
-          writeRecordsInBatchesAsync(payloads)
-            .then(async () => {
-              count += payloads.length;
-              payloads = [];
-              parentPort.postMessage({ ccount: count });
-            })
-            .catch((error) => {
-              console.error("Error al escribir registros en DynamoDB:", error);
-            });
-        } else {
-          // No hay registros para procesar, simplemente notificar al hilo principal
-          parentPort.postMessage({ ccount: count });
-        }
-      }
-    } catch (error) {
-      console.error("Error reading the block:", error);
-      fs.closeSync(fd);
+      });
+  
+      workers.push(worker);
     }
-  };
-  processNextBlock();
-}
+  } else {
+    // Worker thread
+    console.log("Procesando bloques");
+    let payloads = [];
+    let count = 0;
+    const fd = fs.openSync(binaryFilePath, "r");
+    let {offset,option} = workerData;
+    offset = Math.floor(offset);
+    
+    const client = new DynamoDBClient(option);
+    const ddbDocClient = DynamoDBDocumentClient.from(client);
+    const tableName = "accounts-cbus-table";
+  
+    const processNextBlock = async () => {
+      try {
+        if (offset === 0) {
+          // If it's the first time, skip the first 1039 bytes
+          offset += bytesToSkipStart;
+        } else {
+          offset += bytesToSkipAfter; // Skip 250 bytes after each block
+        }
+        const block = await readBlock(fd, offset, blockSize);
+        // Combine the current block with the previous one to search for the pattern
+        const fullBuffer = Buffer.concat([previousBuffer, block]);
+        // Convert the buffer to a text string
+        const fullText = fullBuffer.toString("latin1");
+        // Check if the block starts with a 30 to 31-character number
+        const match = fullText.match(/^\d{30,31}/);
+        if (match) {
+          // Handle the processed block here
+          const dniCbu = match[0];
+          const fullText = match.input;
+          const dni = extractDni(dniCbu);
+          const cbu = extractCBU(dniCbu);
+          const alias = extractAlias(fullText);
+          const typeId = extractTypeId(fullText, dniCbu);
+          const typeName = extractCharactersAfterText(fullText, typeId, dniCbu);
+          const currency = extractCurrency(fullText);
+          const bankId = extractNumberOfCharacters(fullText, currency, 3);
+          const bankName = extractCharactersAfterText(fullText, bankId, dniCbu);
+          const ownerType = extractLetters(fullText, bankName, 1);
+          const cuit = findFirstNumericSequence(fullText);
+          const fullName = extractAndCleanCharacters(fullText, cuit, dniCbu);
+          const createdDate = extractCreatedDate(fullText);
+          const payload = {
+            customer_id: dni,
+            customer_id_cbu: `${dni}:${cbu}`,
+            account_bank: {
+              type: {
+                id: typeId,
+                name: typeName,
+              },
+              currency: currency[0],
+              bank: {
+                id: bankId,
+                name: bankName,
+              },
+              cbu: cbu,
+              alias: alias !== "" ? alias : '',
+              owner: {
+                type: ownerType,
+                fiscal_data: {
+                  id: null,
+                  name: '',
+                  fiscal_key: cuit,
+                },
+                full_name: fullName,
+              },
+            },
+            created_date: createdDate,
+            updated_date: null,
+          };
+          payloads.push(payload);
+          if (payloads.length === 25) {
+            writeRecordsInBatchesAsync(payloads,ddbDocClient,tableName)
+              .then(async () => {
+                count += payloads.length;
+                payloads = [];
+              })
+              .catch((error) => {
+                console.error("Error al escribir registros en DynamoDB:", error);
+              });
+          }
+        }
+        offset += blockSize;
+  
+        if (block.length === blockSize) {
+          processNextBlock();
+        } else {
+          // Reached the end of the file
+          fs.closeSync(fd);
+          // Verificar si quedan registros sin procesar
+          if (payloads.length > 0) {
+            // Escribir los registros restantes
+            writeRecordsInBatchesAsync(payloads)
+              .then(async () => {
+                count += payloads.length;
+                payloads = [];
+                parentPort.postMessage({ ccount: count });
+              })
+              .catch((error) => {
+                console.error("Error al escribir registros en DynamoDB:", error);
+              });
+          } else {
+            // No hay registros para procesar, simplemente notificar al hilo principal
+            parentPort.postMessage({ ccount: count });
+          }
+        }
+      } catch (error) {
+        console.error("Error reading the block:", error);
+        fs.closeSync(fd);
+      }
+    };
+    processNextBlock();
+  }
+})();
