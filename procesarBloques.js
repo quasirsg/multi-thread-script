@@ -83,7 +83,7 @@ const extractAlias = (text) => {
   if (aliasText !== "") {
     return aliasText;
   }
-  return null;
+  return '';
 };
 
 const extractLetters = (fullText, searchText, characterCount) => {
@@ -102,7 +102,7 @@ const extractLetters = (fullText, searchText, characterCount) => {
     }
   }
 
-  return null;
+  return '';
 };
 
 const findFirstNumericSequence = (text) => {
@@ -308,12 +308,12 @@ if (isMainThread) {
               name: bankName,
             },
             cbu: cbu,
-            alias: alias !== "" ? alias : null,
+            alias: alias !== "" ? alias : '',
             owner: {
               type: ownerType,
               fiscal_data: {
                 id: null,
-                name: null,
+                name: '',
                 fiscal_key: cuit,
               },
               full_name: fullName,
