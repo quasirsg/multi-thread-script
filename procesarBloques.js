@@ -11,11 +11,10 @@ const {
 } = require("worker_threads");
 const inquirer = require("inquirer");
 // Path to the binary file
-const binaryFilePath = "mctabancaria.bin";
+const binaryFilePath = "pxldasew.bin";
 const blockSize = 421; // Block size in bytes
 const bytesToSkipStart = 1039; // Number of bytes to skip at the beginning
 const bytesToSkipAfter = 250; // Number of bytes to skip after each block
-const numCores = 3; // Desired number of CPU cores
 let previousBuffer = Buffer.alloc(0); // Variable to store unprocessed fragments
 let threadsFinished = 0; // Counter for worker threads that have finished
 
@@ -89,6 +88,17 @@ const configureAWSClient = async () => {
   }
 };
 
+const promptNumberOfCores = async () => {
+  const answers = await inquirer.prompt([
+    {
+      type: "number",
+      name: "numCores",
+      message: "Especifica el número de núcleos a utilizar:",
+      default: 3, // Valor por defecto
+    },
+  ]);
+  return answers.numCores;
+};
 
 const extractTypeId = (text) => {
   const charactersToExtract = text.slice(50, 52); // Extraer los caracteres desde la posición 50 hasta la 52 (incluyendo el 50, excluyendo el 52)
@@ -293,10 +303,12 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
   if (isMainThread) {
     // Main thread
     let count = 0;
+    const numCores = await promptNumberOfCores();
     // option to configure awsClient
     const option = await configureAWSClient();
     // Create worker threads to process the blocks
     const workers = [];
+    let failedRecords = []; 
     for (let i = 0; i < numCores; i++) {
       const offset = i * blockSize;
       const worker = new Worker(__filename, { workerData: { offset,option } });
