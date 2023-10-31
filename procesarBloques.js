@@ -65,7 +65,7 @@ const configureAWSClient = async () => {
         credentials: {
           accessKeyId: credentialsAnswers.accessKeyId,
           secretAccessKey: credentialsAnswers.secretAccessKey,
-          sessionToken: credentialsAnswers.sessionToken
+          sessionToken: credentialsAnswers.sessionToken,
         },
       };
     case "Introducir qué perfil utilizar":
@@ -157,7 +157,7 @@ const extractAlias = (text) => {
   if (aliasText !== "") {
     return aliasText;
   }
-  return '';
+  return "";
 };
 
 const extractLetters = (fullText, searchText, characterCount) => {
@@ -176,7 +176,7 @@ const extractLetters = (fullText, searchText, characterCount) => {
     }
   }
 
-  return '';
+  return "";
 };
 
 const findFirstNumericSequence = (text) => {
@@ -258,7 +258,7 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async (records,client,tableName) => {
+const writeRecordsInBatches = async (records, client, tableName) => {
   const batchSize = 25; // Tamaño del lote
   const totalRecords = records.length;
   let startIndex = 0;
@@ -278,8 +278,10 @@ const writeRecordsInBatches = async (records,client,tableName) => {
     };
 
     try {
-      await client.send(new BatchWriteCommand(batchWriteParams));
-      console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+      if (client) {
+        await client.send(new BatchWriteCommand(batchWriteParams));
+        console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+      }
     } catch (error) {
       console.error("Error al escribir registros en DynamoDB:", error);
       // Puedes agregar lógica de manejo de errores aquí si es necesario
@@ -289,10 +291,10 @@ const writeRecordsInBatches = async (records,client,tableName) => {
   }
 };
 
-function writeRecordsInBatchesAsync(payloads,client,tableName) {
+function writeRecordsInBatchesAsync(payloads, client, tableName) {
   return new Promise(async (resolve, reject) => {
     try {
-      await writeRecordsInBatches(payloads,client,tableName);
+      await writeRecordsInBatches(payloads, client, tableName);
       resolve();
     } catch (error) {
       reject(error);
@@ -303,20 +305,21 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
   if (isMainThread) {
     // Main thread
     let count = 0;
+    console.time("Tiempo de ejecución");
     const numCores = await promptNumberOfCores();
     // option to configure awsClient
     const option = await configureAWSClient();
     // Create worker threads to process the blocks
     const workers = [];
-    let failedRecords = []; 
+    let failedRecords = [];
     for (let i = 0; i < numCores; i++) {
       const offset = i * blockSize;
-      const worker = new Worker(__filename, { workerData: { offset,option } });
-  
+      const worker = new Worker(__filename, { workerData: { offset, option } });
+
       worker.on("message", async ({ ccount }) => {
         count += ccount;
       });
-  
+
       worker.on("error", (error) => {
         console.error("Error in worker thread:", error);
       });
@@ -326,9 +329,30 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
         threadsFinished++;
         if (threadsFinished === numCores) {
           console.log(`${count} registros escritos en la dynamodb`);
+          console.timeEnd("Tiempo de ejecución");
+          // fs.unlink(`./${binaryFilePath}`, (err) => {
+          //   if (err) {
+          //     console.error('Error al eliminar el archivo:', err);
+          //   } else {
+          //     console.log('El archivo se ha eliminado correctamente.');
+          //   }
+          // });
+
+          const closeConfirmation = await inquirer.prompt([
+            {
+              type: "confirm",
+              name: "confirmClose",
+              message: "¿Deseas cerrar el programa?",
+              default: false,
+            },
+          ]);
+
+          if (closeConfirmation.confirmClose) {
+            process.exit(0); // Cierra el programa
+          }
         }
       });
-  
+
       workers.push(worker);
     }
   } else {
@@ -337,13 +361,13 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
     let payloads = [];
     let count = 0;
     const fd = fs.openSync(binaryFilePath, "r");
-    let {offset,option} = workerData;
+    let { offset, option } = workerData;
     offset = Math.floor(offset);
-    
+
     const client = new DynamoDBClient(option);
     const ddbDocClient = DynamoDBDocumentClient.from(client);
     const tableName = "accounts-cbus-table";
-  
+
     const processNextBlock = async () => {
       try {
         if (offset === 0) {
@@ -389,12 +413,12 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
                 name: bankName,
               },
               cbu: cbu,
-              alias: alias !== "" ? alias : '',
+              alias: alias !== "" ? alias : "",
               owner: {
                 type: ownerType,
                 fiscal_data: {
                   id: null,
-                  name: '',
+                  name: "",
                   fiscal_key: cuit,
                 },
                 full_name: fullName,
@@ -404,19 +428,24 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
             updated_date: null,
           };
           payloads.push(payload);
-          if (payloads.length === 25) {
-            writeRecordsInBatchesAsync(payloads,ddbDocClient,tableName)
+
+          if (payloads.length > 24) {
+            writeRecordsInBatchesAsync(payloads, ddbDocClient, tableName)
               .then(async () => {
                 count += payloads.length;
                 payloads = [];
               })
               .catch((error) => {
-                console.error("Error al escribir registros en DynamoDB:", error);
+                console.error(
+                  "Error al escribir registros en DynamoDB:",
+                  error
+                );
               });
           }
         }
+
         offset += blockSize;
-  
+
         if (block.length === blockSize) {
           processNextBlock();
         } else {
@@ -432,7 +461,10 @@ function writeRecordsInBatchesAsync(payloads,client,tableName) {
                 parentPort.postMessage({ ccount: count });
               })
               .catch((error) => {
-                console.error("Error al escribir registros en DynamoDB:", error);
+                console.error(
+                  "Error al escribir registros en DynamoDB:",
+                  error
+                );
               });
           } else {
             // No hay registros para procesar, simplemente notificar al hilo principal
