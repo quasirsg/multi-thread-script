@@ -317,7 +317,8 @@ const readBlock = (fd, offset, size) => {
     console.log("Procesando bloques");
     let payloads = [];
     let count = 0;
-    let payloadCount = 0;
+    let countBatch;
+
     const fd = fs.openSync(binaryFilePath, "r");
     let { offset, option } = workerData;
     offset = Math.floor(offset);
@@ -329,8 +330,8 @@ const readBlock = (fd, offset, size) => {
     const writeRecordsInBatches = async (records, client, tableName) => {
       const batchSize = 25; // Tamaño del lote
       const totalRecords = records.length;
+      console.log(count);
       let startIndex = 0;
-      console.log(records.length);
       while (startIndex < totalRecords) {
         const endIndex = Math.min(startIndex + batchSize, totalRecords);
         const batchRecords = records.slice(startIndex, endIndex);
@@ -369,7 +370,6 @@ const readBlock = (fd, offset, size) => {
         }
       });
     }
-
     const processNextBlock = async () => {
       try {
         if (offset === 0) {
@@ -432,7 +432,9 @@ const readBlock = (fd, offset, size) => {
           payloads.push(payload);
           
           if (payloads.length >= 25) {
-            writeRecordsInBatchesAsync(payloads, ddbDocClient, tableName)
+            countBatch = payloads;
+            payloads = [];
+            writeRecordsInBatchesAsync(countBatch, ddbDocClient, tableName)
               .then(async () => {
                 count += payloads.length;
                 payloads = [];
