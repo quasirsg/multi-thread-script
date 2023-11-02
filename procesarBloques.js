@@ -258,49 +258,6 @@ const readBlock = (fd, offset, size) => {
   });
 };
 
-const writeRecordsInBatches = async (records, client, tableName) => {
-  const batchSize = 25; // Tamaño del lote
-  const totalRecords = records.length;
-  let startIndex = 0;
-
-  while (startIndex < totalRecords) {
-    const endIndex = Math.min(startIndex + batchSize, totalRecords);
-    const batchRecords = records.slice(startIndex, endIndex);
-
-    const batchWriteParams = {
-      RequestItems: {
-        [tableName]: batchRecords.map((item) => ({
-          PutRequest: {
-            Item: item,
-          },
-        })),
-      },
-    };
-
-    try {
-      if (client) {
-        await client.send(new BatchWriteCommand(batchWriteParams));
-        console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
-      }
-    } catch (error) {
-      console.error("Error al escribir registros en DynamoDB:", error);
-      // Puedes agregar lógica de manejo de errores aquí si es necesario
-    }
-
-    startIndex += batchSize;
-  }
-};
-
-function writeRecordsInBatchesAsync(payloads, client, tableName) {
-  return new Promise(async (resolve, reject) => {
-    try {
-      await writeRecordsInBatches(payloads, client, tableName);
-      resolve();
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
 (async function () {
   if (isMainThread) {
     // Main thread
@@ -360,6 +317,7 @@ function writeRecordsInBatchesAsync(payloads, client, tableName) {
     console.log("Procesando bloques");
     let payloads = [];
     let count = 0;
+    let payloadCount = 0;
     const fd = fs.openSync(binaryFilePath, "r");
     let { offset, option } = workerData;
     offset = Math.floor(offset);
@@ -367,6 +325,50 @@ function writeRecordsInBatchesAsync(payloads, client, tableName) {
     const client = new DynamoDBClient(option);
     const ddbDocClient = DynamoDBDocumentClient.from(client);
     const tableName = "accounts-cbus-table";
+
+    const writeRecordsInBatches = async (records, client, tableName) => {
+      const batchSize = 25; // Tamaño del lote
+      const totalRecords = records.length;
+      let startIndex = 0;
+      console.log(records.length);
+      while (startIndex < totalRecords) {
+        const endIndex = Math.min(startIndex + batchSize, totalRecords);
+        const batchRecords = records.slice(startIndex, endIndex);
+    
+        const batchWriteParams = {
+          RequestItems: {
+            [tableName]: batchRecords.map((item) => ({
+              PutRequest: {
+                Item: item,
+              },
+            })),
+          },
+        };
+    
+        try {
+          if (client) {
+            await client.send(new BatchWriteCommand(batchWriteParams));
+            console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+          }
+        } catch (error) {
+          console.error("Error al escribir registros en DynamoDB:", error);
+          // Puedes agregar lógica de manejo de errores aquí si es necesario
+        }
+    
+        startIndex += batchSize;
+      }
+    };
+    
+    function writeRecordsInBatchesAsync(payloads, client, tableName) {
+      return new Promise(async (resolve, reject) => {
+        try {
+          await writeRecordsInBatches(payloads, client, tableName);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    }
 
     const processNextBlock = async () => {
       try {
@@ -428,8 +430,8 @@ function writeRecordsInBatchesAsync(payloads, client, tableName) {
             updated_date: null,
           };
           payloads.push(payload);
-
-          if (payloads.length > 24) {
+          
+          if (payloads.length >= 25) {
             writeRecordsInBatchesAsync(payloads, ddbDocClient, tableName)
               .then(async () => {
                 count += payloads.length;
@@ -454,7 +456,7 @@ function writeRecordsInBatchesAsync(payloads, client, tableName) {
           // Verificar si quedan registros sin procesar
           if (payloads.length > 0) {
             // Escribir los registros restantes
-            writeRecordsInBatchesAsync(payloads)
+            writeRecordsInBatchesAsync(payloads, ddbDocClient, tableName)
               .then(async () => {
                 count += payloads.length;
                 payloads = [];
