@@ -16,9 +16,15 @@
     "@aws-sdk/client-dynamodb": "^3.421.0",
     "@aws-sdk/client-s3": "^3.421.0",
     "@aws-sdk/lib-dynamodb": "^3.421.0",
+    "abort-controller": "^3.0.0",
     "inquirer": "^8.0.0",
     "nodemon": "^3.0.1",
     "p-queue": "^6.3.0",
+    "piscina": "^4.1.0",
+    "thread-promises": "^1.6.3",
     "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "eslint": "^8.53.0"
   }
 }

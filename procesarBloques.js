@@ -1,3 +1,5 @@
+/* eslint-disable no-case-declarations */
+/* eslint-disable no-undef */
 const fs = require("fs");
 const DynamoDBClient = require("@aws-sdk/client-dynamodb").DynamoDBClient;
 const DynamoDBDocumentClient =
@@ -268,7 +270,6 @@ const readBlock = (fd, offset, size) => {
     const option = await configureAWSClient();
     // Create worker threads to process the blocks
     const workers = [];
-    let failedRecords = [];
     for (let i = 0; i < numCores; i++) {
       const offset = i * blockSize;
       const worker = new Worker(__filename, { workerData: { offset, option } });
@@ -335,7 +336,7 @@ const readBlock = (fd, offset, size) => {
       while (startIndex < totalRecords) {
         const endIndex = Math.min(startIndex + batchSize, totalRecords);
         const batchRecords = records.slice(startIndex, endIndex);
-    
+
         const batchWriteParams = {
           RequestItems: {
             [tableName]: batchRecords.map((item) => ({
@@ -345,22 +346,26 @@ const readBlock = (fd, offset, size) => {
             })),
           },
         };
-    
+
         try {
           if (client) {
             await client.send(new BatchWriteCommand(batchWriteParams));
-            console.log(`Escritos ${batchRecords.length} registros en DynamoDB.`);
+            console.log(
+              `Escritos ${batchRecords.length} registros en DynamoDB.`
+            );
           }
         } catch (error) {
           console.error("Error al escribir registros en DynamoDB:", error);
           // Puedes agregar lógica de manejo de errores aquí si es necesario
         }
-    
+
         startIndex += batchSize;
       }
     };
-    
+
+    // eslint-disable-next-line no-inner-declarations
     function writeRecordsInBatchesAsync(payloads, client, tableName) {
+      // eslint-disable-next-line no-async-promise-executor
       return new Promise(async (resolve, reject) => {
         try {
           await writeRecordsInBatches(payloads, client, tableName);
@@ -430,7 +435,7 @@ const readBlock = (fd, offset, size) => {
             updated_date: null,
           };
           payloads.push(payload);
-          
+
           if (payloads.length >= 25) {
             countBatch = payloads;
             payloads = [];
@@ -480,6 +485,6 @@ const readBlock = (fd, offset, size) => {
         fs.closeSync(fd);
       }
     };
-    processNextBlock();
+    await processNextBlock();
   }
 })();
