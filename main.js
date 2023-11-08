@@ -1,61 +1,54 @@
 /* eslint-disable no-undef */
 const path = require("path");
 const Piscina = require("piscina");
-const { AbortController } = require("abort-controller");
-const abortController = new AbortController();
+const { configureAWSClient } = require("./aws/configureAwsClient");
 
 /** Variables de setup **/
 let numberOfPayloads = 0;
-const numCores = 2;
+const numCores = 4;
 const blockSize = 421;
 const bytesToSkipStart = 1039;
-const bytesToSkipAfter = 250;
 
 const workerOptions = {
-  binaryFilePath: "pxldasew.bin", // Reemplaza con la ubicación de tu archivo binario
+  binaryFilePath: "pxldasew.bin",
   blockSize,
   bytesToSkipStart,
-  bytesToSkipAfter,
-  previousBuffer: Buffer.alloc(0),
-  currentOffset: bytesToSkipStart, // Nuevo campo para rastrear la posición actual
 };
 /** Variables de setup **/
 
 const piscina = new Piscina({
   filename: path.resolve(__dirname, "worker.js"),
-  minThreads: numCores,
+  maxThreads: 4,
 });
 
 // Manejar los mensajes enviados desde los trabajadores
 piscina.on("message", (message) => {
-  console.log(numberOfPayloads);
   numberOfPayloads += message;
+  console.log(numberOfPayloads);
 });
-
-async function runWorker(workerOptions) {
-  try {
-    const { signal } = abortController;
-    const result = await piscina.run(workerOptions, { signal });
-    return result;
-  } catch (error) {
-    console.error("Error en el worker:", error);
-  }
-}
 
 // Ejecuta x instancias del worker, una para cada núcleo
 (async () => {
   console.time("Tiempo de ejecución");
+  // Crear un arreglo de promesas para ejecutar los trabajadores
+  const option = await configureAWSClient();
   const workerPromises = Array(numCores)
     .fill()
-    .map((_, index) => {
-      const threadWorkerOptions = {
-        ...workerOptions,
-        threadNumber: index,
-        offset: index * blockSize,
-      };
-      return runWorker(threadWorkerOptions);
+    .map(async (_, i) => {
+      try {
+        // Ejecutar el trabajador en el grupo de Piscina
+        const result = await piscina.run({
+          ...workerOptions,
+          threadNumber: i,
+          option,
+        });
+        return result;
+      } catch (error) {
+        console.error(`Error en el trabajador ${i}:`, error);
+      }
     });
-  const result = await Promise.all(workerPromises);
-  console.log(result);
+
+  const workerResults = await Promise.all(workerPromises);
+  console.log(workerResults);
   console.timeEnd("Tiempo de ejecución");
 })();
