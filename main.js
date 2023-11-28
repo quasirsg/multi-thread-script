@@ -12,7 +12,7 @@ const workerToDynamoPath = path.resolve(__dirname, "workers/workerToDynamo.js");
 const workerKnowingDeletedRecords = path.resolve(__dirname, "workers/workerKnowingDeletedRecords.js");
 
 const workerOptions = {
-  binaryFilePath: "files/pxldasew.bin",
+  binaryFilePath: "files/pxldasew2.bin",
   blockSize,
   bytesToSkipStart,
 };
@@ -26,7 +26,7 @@ const piscina = new Piscina({
 // Manejar los mensajes enviados desde los trabajadores
 piscina.on("message", (recordsWrited) => {
   numberOfPayloads += recordsWrited;
-  console.log(numberOfPayloads);
+  // console.log(numberOfPayloads);
 });
 
 // Ejecuta x instancias del worker, una para cada núcleo

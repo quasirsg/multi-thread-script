@@ -1,21 +1,11 @@
-const fs = require("fs");
+const fs = require("fs").promises;
 const { parentPort } = require("worker_threads");
-const {
-  extractDni,
-  extractCbu,
-} = require("../model/accountCbuDataTransformer");
+const { extractDni, extractCbu } = require("../model/accountCbuDataTransformer");
 
-const readBlock = (fd, offset, size) => {
-  return new Promise((resolve, reject) => {
-    const buffer = Buffer.alloc(size);
-    fs.read(fd, buffer, 0, size, offset, (error, bytesRead, buffer) => {
-      if (error) {
-        reject(error);
-      } else {
-        resolve(buffer.slice(0, bytesRead));
-      }
-    });
-  });
+const readBlock = async (fileHandle, offset, size) => {
+  const buffer = Buffer.alloc(size);
+  const { bytesRead } = await fileHandle.read(buffer, 0, size, offset);
+  return buffer.slice(0, bytesRead);
 };
 
 const determinateLimitsBytesPerThread = (threadNumber) => {
@@ -34,22 +24,23 @@ const determinateLimitsBytesPerThread = (threadNumber) => {
 };
 
 const processNextBlock = async (
-  fd,
+  fileHandle,
   blockSize,
   bytesToSkipStart,
   threadNumber
 ) => {
   try {
-    let { offset, endBytesToRead } =
-      determinateLimitsBytesPerThread(threadNumber);
-    let payloads = [];
+    let { offset, endBytesToRead } = determinateLimitsBytesPerThread(
+      threadNumber
+    );
     let count = 0;
+
     if (offset === 0) {
       offset += bytesToSkipStart;
     }
 
     while (offset < endBytesToRead) {
-      const block = await readBlock(fd, offset, blockSize);
+      const block = await readBlock(fileHandle, offset, blockSize);
       const fullText = block.toString("latin1");
       if (fullText.length === 421 && fullText.endsWith("01")) {
         const dni = extractDni(fullText);
@@ -60,50 +51,53 @@ const processNextBlock = async (
           customer_id_cbu: `${dni}:${cbu}`,
         };
 
-        payloads.push(payload);
-
-        if (payloads.length >= 25) {
-          // Aquí se guarda el lote de registros en un archivo JSON
-          guardarRegistrosEnJSON(payloads, count);
-          count += payloads.length;
-          parentPort.postMessage(count);
-          payloads = [];
-        }
+        count++;
+        parentPort.postMessage(count);
+        await guardarRegistroEnJSON(payload);
       }
 
       offset += blockSize + 250;
     }
 
-    if (payloads.length > 0) {
-      // Aquí se guarda el lote final de registros en un archivo JSON
-      guardarRegistrosEnJSON(payloads, count);
-      count += payloads.length;
-      parentPort.postMessage(count);
-    }
     // Llegó al final del archivo
-    fs.closeSync(fd);
+    await fileHandle.close();
+
     return count;
   } catch (error) {
     console.error("Error al leer el bloque:", error);
-    fs.closeSync(fd);
+    // Si hay un error, cierra el archivo de todas formas
+    await fileHandle.close().catch(() => {});
   }
 };
 
-// Función para guardar registros en un archivo JSON
-const guardarRegistrosEnJSON = (registros, count) => {
-  const nombreArchivo = `registros_${count}.json`;
-  fs.writeFileSync(nombreArchivo, JSON.stringify(registros, null, 2));
-  console.log(`Registros guardados en ${nombreArchivo}`);
+// Función para guardar un solo registro en un archivo JSON en la carpeta "data"
+let totalRegistrosGuardados = 0;
+
+const guardarRegistroEnJSON = async (registro) => {
+  const nombreArchivo = "data/registros_totales.json";
+  try {
+    // Escribir el archivo JSON de manera asíncrona, añadiendo al final del archivo
+    await fs.writeFile(
+      nombreArchivo,
+      JSON.stringify(registro, null, 2) + ',\n',  // Agregar un salto de línea
+      { flag: "a" }
+    );
+
+    totalRegistrosGuardados++; // Incrementar el contador de registros guardados
+    console.log(`Registro ${totalRegistrosGuardados} guardado en ${nombreArchivo}`);
+  } catch (error) {
+    console.error("Error al guardar registro en JSON:", error);
+  }
 };
 
 // Función manejadora que se ejecutará en el worker
 const workerHandler = async (config) => {
-  const { binaryFilePath, blockSize, bytesToSkipStart, threadNumber } =
-    config;
+  const { binaryFilePath, blockSize, bytesToSkipStart, threadNumber } = config;
 
   try {
+    const fileHandle = await fs.open(binaryFilePath, "r");
     const payloadsCount = await processNextBlock(
-      fs.openSync(binaryFilePath, "r"),
+      fileHandle,
       blockSize,
       bytesToSkipStart,
       threadNumber
