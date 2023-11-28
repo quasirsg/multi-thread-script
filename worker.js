@@ -35,10 +35,14 @@ const readBlock = (fd, offset, size) => {
 
 const determinateLimitsBytesPerThread = (threadNumber) => {
   const obj = {
-    0: { offset: 0, endBytesToRead: 195611379 },
-    1: { offset: 195611630, endBytesToRead: 391222642 },
-    2: { offset: 391222892, endBytesToRead: 586834575 },
-    3: { offset: 586834825, endBytesToRead: 782445166 },
+    0: { offset: 0, endBytesToRead: 97805749 },
+    1: { offset: 97805999, endBytesToRead: 195612050 },
+    2: { offset: 195612301, endBytesToRead: 293417681 },
+    3: { offset: 293417932, endBytesToRead: 391223312 },
+    4: { offset: 391223563, endBytesToRead: 489029614 },
+    5: { offset: 489029865, endBytesToRead: 586835916 },
+    6: { offset: 586836167, endBytesToRead: 684642222 },
+    7: { offset: 684642469, endBytesToRead: 782445567 },
   };
 
   return obj[threadNumber];

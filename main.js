@@ -5,12 +5,12 @@ const { configureAWSClient } = require("./aws/configureAwsClient");
 
 /** Variables de setup **/
 let numberOfPayloads = 0;
-const numCores = 4;
+const numCores = 8;
 const blockSize = 421;
 const bytesToSkipStart = 1039;
 
 const workerOptions = {
-  binaryFilePath: "pxldasew.bin",
+  binaryFilePath: "files/pxldasew.bin",
   blockSize,
   bytesToSkipStart,
 };
@@ -18,12 +18,12 @@ const workerOptions = {
 
 const piscina = new Piscina({
   filename: path.resolve(__dirname, "worker.js"),
-  maxThreads: 4,
+  maxThreads: numCores,
 });
 
 // Manejar los mensajes enviados desde los trabajadores
-piscina.on("message", (message) => {
-  numberOfPayloads += message;
+piscina.on("message", (recordsWrited) => {
+  numberOfPayloads += recordsWrited;
   console.log(numberOfPayloads);
 });
 
