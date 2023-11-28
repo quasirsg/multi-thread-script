@@ -14,8 +14,8 @@ const {
   findFirstNumericSequence,
   extractAndCleanCharacters,
   extractCreatedDate,
-} = require("./model/accountCbuDataTransformer");
-const { writeRecordsInBatches } = require("./aws/batchWriteAccountsCbus");
+} = require("../model/accountCbuDataTransformer");
+const { writeRecordsInBatches } = require("../aws/batchWriteAccountsCbus");
 const DynamoDBClient = require("@aws-sdk/client-dynamodb").DynamoDBClient;
 const DynamoDBDocumentClient =
   require("@aws-sdk/lib-dynamodb").DynamoDBDocumentClient;

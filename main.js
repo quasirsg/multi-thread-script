@@ -8,6 +8,8 @@ let numberOfPayloads = 0;
 const numCores = 8;
 const blockSize = 421;
 const bytesToSkipStart = 1039;
+const workerToDynamoPath = path.resolve(__dirname, "workers/workerToDynamo.js");
+const workerKnowingDeletedRecords = path.resolve(__dirname, "workers/workerKnowingDeletedRecords.js");
 
 const workerOptions = {
   binaryFilePath: "files/pxldasew.bin",
@@ -17,7 +19,7 @@ const workerOptions = {
 /** Variables de setup **/
 
 const piscina = new Piscina({
-  filename: path.resolve(__dirname, "worker.js"),
+  filename: workerKnowingDeletedRecords,
   maxThreads: numCores,
 });
 
