@@ -17,7 +17,7 @@ const determinateLimitsBytesPerThread = (threadNumber) => {
     4: { offset: 391223563, endBytesToRead: 489029614 },
     5: { offset: 489029865, endBytesToRead: 586835916 },
     6: { offset: 586836167, endBytesToRead: 684642222 },
-    7: { offset: 684642469, endBytesToRead: 782445567 },
+    7: { offset: 684642469, endBytesToRead: 783135860 },
   };
 
   return obj[threadNumber];
