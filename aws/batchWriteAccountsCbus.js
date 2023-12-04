@@ -13,7 +13,6 @@ const writeRecordsInBatches = async (records, client) => {
     };
 
     await client.send(new BatchWriteCommand(batchWriteParams));
-    console.log(`Escritos ${records.length} registros en DynamoDB.`);
     return records.length;
   } catch (error) {
     console.error("Error al escribir registros en DynamoDB:", error);

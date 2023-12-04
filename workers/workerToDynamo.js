@@ -59,7 +59,7 @@ const processNextBlock = async (
     let { offset, endBytesToRead } =
       determinateLimitsBytesPerThread(threadNumber);
     let payloads = [];
-    let count;
+    let count = 0;
     if (offset === 0) {
       offset += bytesToSkipStart;
     }
